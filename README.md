@@ -243,7 +243,7 @@ src/
 ## Contact
 
 Research by José Armando Gonzales Oblitas
-josepharmandogonzalesoblitas@gmail.com
+ing.josephgonzales@gmail.com
 
 Looking for collaborators on: formal proof of completeness, lower bounds on K_min(N),
 generalization beyond N=128.
