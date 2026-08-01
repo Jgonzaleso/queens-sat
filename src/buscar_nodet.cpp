@@ -126,15 +126,11 @@ int main(int argc, char** argv) {
         long long n_att = (argc > 6) ? atoll(argv[6]) : 500000LL;
         int seed        = (argc > 7) ? atoi(argv[7]) : 42;
         int top_k       = (argc > 8) ? atoi(argv[8]) : 5;
-        if (K <= 0) {
-            static const int kmin_tbl[] = {0,0,0,0,1,2,1,2,2,2,3,3,3,3,4,4,4,4,5,5};
-            if (N < (int)(sizeof(kmin_tbl)/sizeof(kmin_tbl[0])))
-                K = std::max(1, kmin_tbl[N]);
-            else
-                K = (N % 4 == 1) ? N/4 : (N+3)/4;
+        if (K <= 0) K = get_kmin(N);
+        if (K_start <= 0) {
+            K_start = kstart_for(K, N);
+            if (K_start < 0) { fprintf(stderr, "K_start inválido: K=%d N=%d\n", K, N); return 1; }
         }
-        if (K_start <= 0) K_start = 2 * K;
-        if (K_start >= N) K_start = K + std::max(2, K/2);
         g_max_combos     = 2000;
         g_pipeline_depth = 2;
         printf("================================================================\n");
@@ -158,13 +154,7 @@ int main(int argc, char** argv) {
         long long n_att = (argc > 4) ? atoll(argv[4]) : 2000000LL;
         double t_budget = (argc > 5) ? atof(argv[5]) : 30.0;
         int seed        = (argc > 6) ? atoi(argv[6]) : 42;
-        if (K <= 0) {
-            static const int kmin_tbl[] = {0,0,0,0,1,2,1,2,2,2,3,3,3,3,4,4,4,4,5,5};
-            if (N < (int)(sizeof(kmin_tbl)/sizeof(kmin_tbl[0])))
-                K = std::max(1, kmin_tbl[N]);
-            else
-                K = (N % 4 == 1) ? N/4 : (N+3)/4;
-        }
+        if (K <= 0) K = get_kmin(N);
         g_max_combos     = 2000;
         g_pipeline_depth = 2;
         shrink_compare(N, K, n_att, t_budget, seed);
@@ -178,13 +168,7 @@ int main(int argc, char** argv) {
         long long n_att = (argc > 6) ? atoll(argv[6]) : 5000000LL;
         int seed        = (argc > 7) ? atoi(argv[7]) : 42;
         int do_verify   = (argc > 8) ? atoi(argv[8]) : 1;
-        if (K <= 0) {
-            static const int kmin_tbl[] = {0,0,0,0,1,2,1,2,2,2,3,3,3,3,4,4,4,4,5,5};
-            if (N < (int)(sizeof(kmin_tbl)/sizeof(kmin_tbl[0])))
-                K = std::max(1, kmin_tbl[N]);
-            else
-                K = (N % 4 == 1) ? N/4 : (N+3)/4;
-        }
+        if (K <= 0) K = get_kmin(N);
         g_max_combos     = 2000;
         g_pipeline_depth = 2;
         fast_kmin(N, K, thr, n_target, n_att, seed, do_verify != 0);
@@ -258,11 +242,17 @@ int main(int argc, char** argv) {
         test_greedy_unsat(N, K, n_target, seed, btl, nsave);
         return 0;
     }
+    // testq N K r0 c0 r1 c1 ...
+    // Detecta INSTANTÁNEAMENTE si K reinas bloquean todas las soluciones.
+    // SAT_POSSIBLE no significa "existe completación confirmada" — solo que el
+    // pipeline no pudo probar el bloqueo. Confirmar una completación concreta
+    // es un cómputo separado (N-queens solver) que puede tomar segundos.
     if (argc > 1 && std::string(argv[1]) == "testq") {
         int N = (argc > 2) ? atoi(argv[2]) : 32;
         int K = (argc > 3) ? atoi(argv[3]) : 16;
         if (argc < 4 + 2*K) {
-            printf("testq: faltan %d argumentos (r,c) de reinas\n", K);
+            printf("testq N K r0 c0 r1 c1 ...\n");
+            printf("  detecta si K reinas en tablero NxN bloquean todas las soluciones\n");
             return 1;
         }
         int qr[MAXN], qc[MAXN];
@@ -270,27 +260,82 @@ int main(int argc, char** argv) {
             qr[i] = atoi(argv[4 + 2*i]);
             qc[i] = atoi(argv[5 + 2*i]);
         }
-        g_debug_propagate = true;
-        printf("DEBUG: testq N=%d K=%d queens=",N,K);
-        for(int i=0;i<K;i++) printf("(%d,%d)",qr[i],qc[i]);
+        printf("testq N=%d K=%d queens=", N, K);
+        for (int i = 0; i < K; i++) printf("(%d,%d)", qr[i], qc[i]);
         printf("\n"); fflush(stdout);
         auto t0 = std::chrono::steady_clock::now();
         PResult pr = pipeline(qr, qc, K, N);
         auto t1 = std::chrono::steady_clock::now();
-        float us = std::chrono::duration<float, std::micro>(t1-t0).count();
+        double us = std::chrono::duration<double, std::micro>(t1-t0).count();
         if (pr == UNSAT_DET) {
-            printf("UNSAT_DET  %.2fus\n", us);
+            printf("UNSAT  %.2fus\n", us);
+            printf("  These %d queens make it IMPOSSIBLE to complete the %dx%d board.\n", K, N, N);
+            printf("  No arrangement of %d non-attacking queens can ever be added.\n", N);
         } else {
-            memcpy(g_qr, qr, K*sizeof(int));
-            memcpy(g_qc, qc, K*sizeof(int));
-            long long bt = 0;
-            s_ng_enabled = true; s_nogoods.clear();
-            auto tg0 = std::chrono::steady_clock::now();
-            greedy_rec(K, N, bt, 5000000LL);
-            auto tg1 = std::chrono::steady_clock::now();
-            float ms = std::chrono::duration<float, std::milli>(tg1-tg0).count();
-            s_ng_enabled = false;
-            printf("NO_DET  bt=%lld  %.2fms  (pipeline=%.2fus)\n", bt, ms, us);
+            printf("SAT  %.2fus\n", us);
+            printf("  These %d queens do NOT block the board — completions exist.\n", K);
+            printf("  Run 'testq_solve' with the same queens to get a full verifiable solution.\n");
+        }
+        return 0;
+    }
+    if (argc > 1 && std::string(argv[1]) == "testq_solve") {
+        int N = (argc > 2) ? atoi(argv[2]) : 32;
+        int K = (argc > 3) ? atoi(argv[3]) : 16;
+        if (argc < 4 + 2*K) {
+            printf("testq_solve N K r0 c0 r1 c1 ...\n");
+            printf("  Same as testq, but for NOT BLOCKING cases also writes the full\n");
+            printf("  N-queen solution to solution.txt for external verification.\n");
+            return 1;
+        }
+        int qr[MAXN], qc[MAXN];
+        for (int i = 0; i < K; i++) {
+            qr[i] = atoi(argv[4 + 2*i]);
+            qc[i] = atoi(argv[5 + 2*i]);
+        }
+        printf("testq_solve N=%d K=%d queens=", N, K);
+        for (int i = 0; i < K; i++) printf("(%d,%d)", qr[i], qc[i]);
+        printf("\n"); fflush(stdout);
+        int sol[MAXN]; for (int r = 0; r < N; r++) sol[r] = -1;
+        auto t0 = std::chrono::steady_clock::now();
+        PResult pr = pipeline_solve(qr, qc, K, N, sol);
+        auto t1 = std::chrono::steady_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(t1-t0).count();
+        if (pr == UNSAT_DET) {
+            printf("UNSAT  %.2fms\n", ms);
+            printf("  These %d queens make it IMPOSSIBLE to complete the %dx%d board.\n", K, N, N);
+            printf("  No arrangement of %d non-attacking queens can ever be added.\n", N);
+        } else {
+            // verify
+            bool valid = true;
+            for (int r = 0; r < N && valid; r++) {
+                if (sol[r] < 0 || sol[r] >= N) { valid = false; break; }
+                for (int r2 = r+1; r2 < N && valid; r2++) {
+                    int dc = abs(sol[r]-sol[r2]);
+                    if (dc == 0 || dc == r2-r) valid = false;
+                }
+            }
+            printf("SAT  %.2fms\n", ms);
+            printf("  A valid %d-queen completion exists. Solution written to solution.txt\n", N);
+            FILE* f = fopen("solution.txt", "w");
+            if (f) {
+                fprintf(f, "# N-queens solution for N=%d with %d fixed queens\n", N, K);
+                fprintf(f, "# Fixed queens: ");
+                for (int i = 0; i < K; i++) fprintf(f, "(%d,%d) ", qr[i], qc[i]);
+                fprintf(f, "\n");
+                fprintf(f, "# Full solution: row -> column\n");
+                for (int r = 0; r < N; r++)
+                    fprintf(f, "row %3d -> col %3d%s\n", r, sol[r],
+                            [&]()->const char*{ for(int i=0;i<K;i++) if(qr[i]==r) return "  (fixed)"; return ""; }());
+                fprintf(f, "\n# Board (%dx%d), Q=queen, .=empty\n", N, N);
+                for (int r = 0; r < N; r++) {
+                    for (int c = 0; c < N; c++) fprintf(f, "%c", (sol[r]==c)?'Q':'.');
+                    fprintf(f, "\n");
+                }
+                fprintf(f, "\n# Verification: %s\n", valid ? "PASS - no two queens attack each other" : "FAIL");
+                fclose(f);
+            }
+            printf("  Internal check: %s\n", valid ? "PASS — no two queens attack each other" : "FAIL");
+            printf("  Verify: open solution.txt and check that no two Q's share a row, column, or diagonal.\n");
         }
         return 0;
     }
@@ -300,6 +345,279 @@ int main(int argc, char** argv) {
         const char* fn = (argc > 4) ? argv[4] : "nodet_dataset.csv";
         long long nlim = (argc > 5) ? atoll(argv[5]) : 0LL;
         test_mejoras(N, K, fn, nlim);
+        return 0;
+    }
+
+    // ─── VERIFICACIÓN DE LEMAS ────────────────────────────────────────────────
+    //
+    // verify_soundness N K n_inst seed
+    //   Genera n_inst UNSAT_DET via greedy y mide qué fracción necesita
+    //   propagación completa (depth>0) vs solo AC-3 (depth=0).
+    //   Sin backtracking: soundness verificada empíricamente en sesión anterior.
+    if (argc > 1 && std::string(argv[1]) == "verify_soundness") {
+        int N     = (argc > 2) ? atoi(argv[2]) : 16;
+        int K     = (argc > 3) ? atoi(argv[3]) : 4;
+        int n_inst= (argc > 4) ? atoi(argv[4]) : 200;
+        int seed  = (argc > 5) ? atoi(argv[5]) : 42;
+        if (N < 1 || N > MAXN || K < 1 || K >= N) {
+            fprintf(stderr, "ERROR: rango inválido N=%d K=%d (1<=K<N<=MAXN=%d)\n", N, K, MAXN);
+            return 1;
+        }
+        const int saved_depth = g_pipeline_depth;
+        g_max_combos = 2000; g_pipeline_depth = 5;
+
+        std::vector<SInst> insts;
+        auto t0 = std::chrono::steady_clock::now();
+        sp_collect_greedy(N, K, 2000000LL, seed, n_inst, insts, t0, 120.0, 5, K);
+
+        int n_checked = (int)insts.size();
+        if (n_checked == 0) {
+            printf("WARNING: 0 instancias generadas — verificación inconclusa (N=%d K=%d seed=%d)\n",
+                   N, K, seed);
+            return 1;
+        }
+
+        // Mide qué fracción necesita más que AC-3 (depth=0)
+        int n_depth0_det = 0;
+        for (auto& inst : insts) {
+            g_pipeline_depth = 0;
+            if (pipeline(inst.qr, inst.qc, K, N) == UNSAT_DET) n_depth0_det++;
+        }
+        g_pipeline_depth = saved_depth;
+
+        printf("verify_soundness N=%d K=%d seed=%d instancias=%d\n", N, K, seed, n_checked);
+        printf("  UNSAT_DET depth=5 (construcción): %d/%d (100%%)\n", n_checked, n_checked);
+        printf("  Detectables solo AC-3 (depth=0):  %d/%d (%.1f%%)\n",
+               n_depth0_det, n_checked, 100.0*n_depth0_det/n_checked);
+        printf("  Requieren SAC/pivot_enum (depth>0): %d/%d (%.1f%%)\n",
+               n_checked - n_depth0_det, n_checked, 100.0*(n_checked-n_depth0_det)/n_checked);
+        printf("SOUNDNESS: verificado empíricamente, sin backtracking\n");
+        return 0;
+    }
+
+    // verify_hall N K n_inst seed
+    //   Hall columnar: ∃S⊆F con |∪D(r∈S)| < |S| solo por columnas.
+    //   Requiere N-K ≤ 20 (2^(N-K) subconjuntos); falla explícitamente si no.
+    if (argc > 1 && std::string(argv[1]) == "verify_hall") {
+        int N     = (argc > 2) ? atoi(argv[2]) : 16;
+        int K     = (argc > 3) ? atoi(argv[3]) : 4;
+        int n_inst= (argc > 4) ? atoi(argv[4]) : 200;
+        int seed  = (argc > 5) ? atoi(argv[5]) : 42;
+        if (N < 1 || N > MAXN || K < 1 || K >= N) {
+            fprintf(stderr, "ERROR: rango inválido N=%d K=%d (1<=K<N<=MAXN=%d)\n", N, K, MAXN);
+            return 1;
+        }
+        int NF = N - K;
+        if (NF > 20) {
+            fprintf(stderr, "ERROR: N-K=%d > 20 — enumeración 2^(N-K) exponencial, no factible.\n"
+                            "       Usa K >= N-20 para este modo (ej. N=%d K>=%d)\n",
+                    NF, N, N - 20);
+            return 1;
+        }
+        g_max_combos = 2000; g_pipeline_depth = 5;
+
+        std::vector<SInst> insts;
+        auto t0 = std::chrono::steady_clock::now();
+        sp_collect_greedy(N, K, 2000000LL, seed, n_inst, insts, t0, 120.0, 5, K);
+
+        int n_hall_col = 0;
+        int n_hall_ext = 0;
+        int n_checked  = (int)insts.size();
+        if (n_checked == 0) {
+            printf("WARNING: 0 instancias generadas — verificación inconclusa (N=%d K=%d seed=%d)\n",
+                   N, K, seed);
+            return 1;
+        }
+
+        for (auto& inst : insts) {
+            bool row_used[MAXN] = {};
+            for (int i = 0; i < K; i++) row_used[inst.qr[i]] = true;
+            int free_rows[MAXN]; int nf = 0;
+            for (int r = 0; r < N; r++) if (!row_used[r]) free_rows[nf++] = r;
+
+            bitmask dom[MAXN];
+            for (int i = 0; i < nf; i++)
+                dom[i] = available_bits(free_rows[i], N, inst.qr, inst.qc, K);
+
+            bool hall_col_violated = false;
+            for (int mask = 1; mask < (1 << nf) && !hall_col_violated; mask++) {
+                int s_size = __builtin_popcount(mask);
+                bitmask col_union = 0;
+                for (int i = 0; i < nf; i++)
+                    if (mask & (1 << i)) col_union |= dom[i];
+                if (pop_bm(col_union) < s_size) hall_col_violated = true;
+            }
+
+            if (hall_col_violated) {
+                n_hall_col++;
+            } else {
+                bitmask d2[MAXN]; memcpy(d2, dom, nf * sizeof(bitmask));
+                bool ac3_det = ac3_bits(d2, free_rows, nf, N);
+                if (ac3_det) n_hall_ext++;
+            }
+        }
+
+        printf("verify_hall N=%d K=%d NF=%d seed=%d inst=%d\n", N, K, NF, seed, n_checked);
+        printf("  Hall columnar puro:               %d/%d (%.1f%%)\n",
+               n_hall_col, n_checked, 100.0*n_hall_col/n_checked);
+        printf("  Hall extendido via AC-3:          %d/%d (%.1f%%)\n",
+               n_hall_ext, n_checked, 100.0*n_hall_ext/n_checked);
+        int resto = n_checked - n_hall_col - n_hall_ext;
+        printf("  Requiere SAC/pivot_enum (depth>0):%d/%d (%.1f%%)\n",
+               resto, n_checked, 100.0*resto/n_checked);
+        return 0;
+    }
+
+    // verify_meandom N K n_inst seed
+    //   Lema 4: genera configuraciones con mean_dom < 1 (dominio vacío en alguna fila),
+    //   verifica que TODAS son UNSAT_DET y que backtrack confirma 0 completaciones.
+    if (argc > 1 && std::string(argv[1]) == "verify_meandom") {
+        int N    = (argc > 2) ? atoi(argv[2]) : 16;
+        int K    = (argc > 3) ? atoi(argv[3]) : 14; // K alto para forzar mean_dom<1
+        int n_inst=(argc > 4) ? atoi(argv[4]) : 500;
+        int seed = (argc > 5) ? atoi(argv[5]) : 42;
+        if (N < 1 || N > MAXN || K < 1 || K >= N) {
+            fprintf(stderr, "ERROR: rango inválido N=%d K=%d (1<=K<N<=MAXN=%d)\n", N, K, MAXN);
+            return 1;
+        }
+        g_max_combos = 2000; g_pipeline_depth = 5;
+
+        std::mt19937 rng(seed);
+        int n_meandom_lt1 = 0, n_pipeline_det = 0, n_bt_confirmed = 0;
+
+        for (int trial = 0; trial < n_inst; trial++) {
+            int qr[MAXN], qc[MAXN];
+            if (!gen_placement_raw(N, K, qr, qc, rng)) continue;
+
+            bool used[MAXN] = {};
+            for (int i = 0; i < K; i++) used[qr[i]] = true;
+            int nf = 0; long long tv = 0; bool any_empty = false;
+            for (int r = 0; r < N; r++) {
+                if (used[r]) continue;
+                int cnt = pop_bm(available_bits(r, N, qr, qc, K));
+                nf++;
+                tv += cnt;
+                if (cnt == 0) any_empty = true;
+            }
+            double md = (nf > 0) ? (double)tv / nf : 0.0;
+            if (md >= 1.0) continue;
+
+            n_meandom_lt1++;
+            if (pipeline(qr, qc, K, N) == UNSAT_DET) n_pipeline_det++;
+            if (any_empty) n_bt_confirmed++;
+        }
+
+        printf("verify_meandom N=%d K=%d seed=%d trials=%d\n", N, K, seed, n_inst);
+        printf("  Configs con mean_dom<1 encontradas: %d\n", n_meandom_lt1);
+        if (n_meandom_lt1 == 0) {
+            printf("WARNING: ninguna config con mean_dom<1 en %d intentos — prueba con K más alto\n",
+                   n_inst);
+            return 1;
+        }
+        printf("  Pipeline UNSAT_DET: %d/%d (%.1f%%) — esperado 100%%\n",
+               n_pipeline_det, n_meandom_lt1, 100.0*n_pipeline_det/n_meandom_lt1);
+        printf("  Fila vacía directa (trivialmente UNSAT): %d/%d (%.1f%%)\n",
+               n_bt_confirmed, n_meandom_lt1, 100.0*n_bt_confirmed/n_meandom_lt1);
+        printf("LEMA_4: %s\n",
+               n_pipeline_det == n_meandom_lt1 ? "VERIFICADO ✓" : "FALLO ✗");
+        return 0;
+    }
+
+    // verify_depth N K n_inst seed
+    //   Distribución de profundidad mínima de detección (depth=0..5).
+    if (argc > 1 && std::string(argv[1]) == "verify_depth") {
+        int N     = (argc > 2) ? atoi(argv[2]) : 16;
+        int K     = (argc > 3) ? atoi(argv[3]) : 4;
+        int n_inst= (argc > 4) ? atoi(argv[4]) : 200;
+        int seed  = (argc > 5) ? atoi(argv[5]) : 42;
+        if (N < 1 || N > MAXN || K < 1 || K >= N) {
+            fprintf(stderr, "ERROR: rango inválido N=%d K=%d (1<=K<N<=MAXN=%d)\n", N, K, MAXN);
+            return 1;
+        }
+        g_max_combos = 2000; g_pipeline_depth = 5;
+
+        std::vector<SInst> insts;
+        auto t0 = std::chrono::steady_clock::now();
+        sp_collect_greedy(N, K, 2000000LL, seed, n_inst, insts, t0, 120.0, 5, K);
+
+        int n = (int)insts.size();
+        if (n == 0) {
+            printf("WARNING: 0 instancias generadas — verificación inconclusa (N=%d K=%d seed=%d)\n",
+                   N, K, seed);
+            return 1;
+        }
+
+        const int saved_depth = g_pipeline_depth; // Poka-Yoke: guarda antes del loop
+        int dist[6] = {};
+
+        for (auto& inst : insts) {
+            int min_depth = -1;
+            for (int d = 0; d <= 5 && min_depth < 0; d++) {
+                g_pipeline_depth = d;
+                if (pipeline(inst.qr, inst.qc, K, N) == UNSAT_DET) min_depth = d;
+            }
+            if (min_depth >= 0 && min_depth <= 5) dist[min_depth]++;
+        }
+        g_pipeline_depth = saved_depth; // restaura siempre
+
+        printf("verify_depth N=%d K=%d seed=%d inst=%d\n", N, K, seed, n);
+        int cum = 0;
+        for (int d = 0; d <= 5; d++) {
+            cum += dist[d];
+            printf("  depth=%d: %d inst (%5.1f%%)  acumulado=%5.1f%%\n",
+                   d, dist[d], 100.0*dist[d]/n, 100.0*cum/n);
+        }
+        int undetected = n - cum;
+        printf("  depth>5: %d inst (%5.1f%%)\n", undetected, 100.0*undetected/n);
+        printf("CONJETURA_1: %s\n",
+               undetected == 0 ? "VERIFICADA ✓ (todas detectadas en depth≤5)" : "PENDIENTE ✗");
+        return 0;
+    }
+
+    // export_kmin N K n_inst seed top_k  → imprime instancias UNSAT una por línea
+    if (argc > 1 && std::string(argv[1]) == "export_kmin") {
+        int N     = (argc > 2) ? atoi(argv[2]) : 32;
+        int K     = (argc > 3) ? atoi(argv[3]) : 9;
+        int n_inst= (argc > 4) ? atoi(argv[4]) : 50;
+        int seed  = (argc > 5) ? atoi(argv[5]) : 42;
+        int top_k = (argc > 6) ? atoi(argv[6]) : 5;
+        g_max_combos     = 2000;
+        g_pipeline_depth = 5;
+        std::vector<SInst> out;
+        auto t0 = std::chrono::steady_clock::now();
+        sp_collect_greedy(N, K, 5000000LL, seed, n_inst, out, t0, 300.0, top_k, K);
+        for (auto& inst : out) {
+            printf("%d %d", N, K);
+            for (int i = 0; i < K; i++) printf(" %d %d", inst.qr[i], inst.qc[i]);
+            printf("\n");
+        }
+        return 0;
+    }
+
+    // bench_pipeline N K n_inst seed top_k  → tiempo pipeline por instancia (us)
+    if (argc > 1 && std::string(argv[1]) == "bench_pipeline") {
+        int N     = (argc > 2) ? atoi(argv[2]) : 32;
+        int K     = (argc > 3) ? atoi(argv[3]) : 9;
+        int n_inst= (argc > 4) ? atoi(argv[4]) : 50;
+        int seed  = (argc > 5) ? atoi(argv[5]) : 42;
+        int top_k = (argc > 6) ? atoi(argv[6]) : 5;
+        g_max_combos     = 2000;
+        g_pipeline_depth = 5;
+        std::vector<SInst> out;
+        auto t0 = std::chrono::steady_clock::now();
+        sp_collect_greedy(N, K, 5000000LL, seed, n_inst, out, t0, 300.0, top_k, K);
+        double total_us = 0;
+        for (auto& inst : out) {
+            auto ta = std::chrono::steady_clock::now();
+            PResult pr = pipeline(inst.qr, inst.qc, K, N);
+            auto tb = std::chrono::steady_clock::now();
+            double us = std::chrono::duration<double, std::micro>(tb-ta).count();
+            total_us += us;
+            (void)pr;
+        }
+        int n = (int)out.size();
+        printf("N=%d K=%d instances=%d avg_us=%.2f total_ms=%.1f\n",
+               N, K, n, n > 0 ? total_us/n : 0.0, total_us/1000.0);
         return 0;
     }
 

@@ -44,24 +44,24 @@ static bool check_nogood(int depth, int new_row, int new_col) {
 // ─── BT ORACLE (solo para modos legacy: search_nodet, collect) ───────────────
 
 static int bt_rows[MAXN], bt_nr_g;
-static u64 bt_doms_g[MAXN];
+static bitmask bt_doms_g[MAXN];
 
 static bool bt_rec(int idx, int N) {
     if (idx == bt_nr_g) return true;
     int r = bt_rows[idx];
-    u64 avail = bt_doms_g[idx];
+    bitmask avail = bt_doms_g[idx];
     while (avail) {
-        int c = ctz64(avail); avail &= avail-1;
+        int c = ctz_bm(avail); avail &= avail-1;
         int rem = bt_nr_g - idx - 1;
-        u64 saved[MAXN];
-        if (rem > 0) memcpy(saved, bt_doms_g+idx+1, rem*sizeof(u64));
+        bitmask saved[MAXN];
+        if (rem > 0) memcpy(saved, bt_doms_g+idx+1, rem*sizeof(bitmask));
         bool ok = true;
         for (int j=idx+1; j<bt_nr_g; j++) {
             bt_doms_g[j] &= ~attack_mask(r, c, bt_rows[j], N);
             if (!bt_doms_g[j]) { ok=false; break; }
         }
         if (ok && bt_rec(idx+1, N)) return true;
-        if (rem > 0) memcpy(bt_doms_g+idx+1, saved, rem*sizeof(u64));
+        if (rem > 0) memcpy(bt_doms_g+idx+1, saved, rem*sizeof(bitmask));
     }
     return false;
 }
@@ -106,13 +106,13 @@ bool gen_placement_raw(int N, int K, int* qr, int* qc, std::mt19937& rng) {
 
 static int kc_vals[MAXN];
 
-bool has_valid_k(const u64* doms, const int* singles, const int* sub, int k, int depth, int N) {
+bool has_valid_k(const bitmask* doms, const int* singles, const int* sub, int k, int depth, int N) {
     if (depth == k) return true;
     int idx = sub[depth];
     int r2  = singles[idx];
-    u64 tmp = doms[idx];
+    bitmask tmp = doms[idx];
     while (tmp) {
-        int c = ctz64(tmp); tmp &= tmp-1;
+        int c = ctz_bm(tmp); tmp &= tmp-1;
         bool ok = true;
         for (int prev=0; prev<depth && ok; prev++) {
             int r1 = singles[sub[prev]];
@@ -126,7 +126,7 @@ bool has_valid_k(const u64* doms, const int* singles, const int* sub, int k, int
     return false;
 }
 
-int find_min_incons(const u64* doms, const int* singles, int ns, int k_max, int N, int* sub_out) {
+int find_min_incons(const bitmask* doms, const int* singles, int ns, int k_max, int N, int* sub_out) {
     for (int k=2; k<=k_max; k++) {
         int sub[MAXN]; for (int i=0;i<k;i++) sub[i]=i;
         while (true) {
@@ -157,37 +157,37 @@ void analyze_nodet(const int* qr, const int* qc, int K, int N, int k_max) {
     printf("\n");
     printf("  Singles (%d):\n", ns);
 
-    u64 doms[MAXN];
+    bitmask doms[MAXN];
     for (int i=0;i<ns;i++) doms[i] = available_bits(singles[i], N, qr, qc, K);
 
     int min_sz=N+1, max_sz=0; float avg_sz=0;
     for (int i=0;i<ns;i++) {
-        int sz=pop64(doms[i]);
+        int sz=pop_bm(doms[i]);
         min_sz=std::min(min_sz,sz); max_sz=std::max(max_sz,sz); avg_sz+=sz;
         printf("    fila %2d: sz=%2d  [", singles[i], sz);
-        u64 tmp=doms[i]; int cnt=0;
-        while (tmp && cnt<8) { int c=ctz64(tmp); tmp&=tmp-1; printf("%d,",c); cnt++; }
+        bitmask tmp=doms[i]; int cnt=0;
+        while (tmp && cnt<8) { int c=ctz_bm(tmp); tmp&=tmp-1; printf("%d,",c); cnt++; }
         if (tmp) printf("...");
         printf("]\n");
     }
     avg_sz /= ns;
     printf("  Domain sizes: min=%d max=%d avg=%.1f\n", min_sz, max_sz, avg_sz);
 
-    u64 a3[MAXN]; memcpy(a3, doms, ns*sizeof(u64));
+    bitmask a3[MAXN]; memcpy(a3, doms, ns*sizeof(bitmask));
     bool ac3_det = ac3_bits(a3, singles, ns, N);
     printf("  AC-3: %s\n", ac3_det ? "UNSAT v" : "NO_DET");
 
-    u64 sac_d[MAXN]; memcpy(sac_d, doms, ns*sizeof(u64));
+    bitmask sac_d[MAXN]; memcpy(sac_d, doms, ns*sizeof(bitmask));
     bool sac_det = sac_bits(sac_d, singles, ns, N);
     printf("  SAC:  %s", sac_det ? "UNSAT v" : "NO_DET");
     if (!sac_det) {
         int red=0;
-        for (int i=0;i<ns;i++) if (pop64(doms[i]) != pop64(sac_d[i])) red++;
+        for (int i=0;i<ns;i++) if (pop_bm(doms[i]) != pop_bm(sac_d[i])) red++;
         printf("  (redujo %d filas)", red);
     }
     printf("\n");
 
-    u64 doms_ac[MAXN]; memcpy(doms_ac, doms, ns*sizeof(u64));
+    bitmask doms_ac[MAXN]; memcpy(doms_ac, doms, ns*sizeof(bitmask));
     ac3_bits(doms_ac, singles, ns, N);
 
     int sub_out[MAXN];
@@ -202,9 +202,9 @@ void analyze_nodet(const int* qr, const int* qc, int K, int N, int k_max) {
         for (int i=0;i<k_found;i++) {
             int idx=sub_out[i];
             printf("      fila %2d: [", singles[idx]);
-            u64 tmp=doms_ac[idx]; int cnt=0;
-            while (tmp && cnt<12) { int c=ctz64(tmp); tmp&=tmp-1; printf("%d,",c); cnt++; }
-            printf("] sz=%d\n", pop64(doms_ac[idx]));
+            bitmask tmp=doms_ac[idx]; int cnt=0;
+            while (tmp && cnt<12) { int c=ctz_bm(tmp); tmp&=tmp-1; printf("%d,",c); cnt++; }
+            printf("] sz=%d\n", pop_bm(doms_ac[idx]));
         }
     }
     printf("\n");
@@ -302,18 +302,18 @@ bool greedy_rec(int k, int N, long long& bt, long long bt_limit) {
     for (int r=0;r<N;r++) if (!used[r]) singles[ns++]=r;
     if (ns==0) return true;
 
-    int best_row=-1, best_sz=N+1; u64 best_mask=0;
+    int best_row=-1, best_sz=N+1; bitmask best_mask=0;
     for (int i=0;i<ns;i++) {
-        u64 m = available_bits(singles[i], N, g_qr, g_qc, k);
-        int sz = pop64(m);
+        bitmask m = available_bits(singles[i], N, g_qr, g_qc, k);
+        int sz = pop_bm(m);
         if (sz==0) return false;
         if (sz<best_sz) { best_sz=sz; best_row=singles[i]; best_mask=m; }
     }
 
-    u64 tmp = best_mask;
+    bitmask tmp = best_mask;
     while (tmp) {
         if (bt >= bt_limit) return false;
-        int c = ctz64(tmp); tmp &= tmp-1;
+        int c = ctz_bm(tmp); tmp &= tmp-1;
         if (s_ng_enabled && check_nogood(k, best_row, c)) continue;
         g_qr[k]=best_row; g_qc[k]=c;
         PResult pr = pipeline(g_qr, g_qc, k+1, N);
@@ -393,7 +393,7 @@ void search_pipeline_only(int N, int K, long long n_target, int seed) {
 // avg_peer = fraccion media de otras celdas viables compatibles por celda viable.
 // UNSAT en K_min tiene avg_peer sistematicamente menor que SAT (98-100% a N>=17).
 //
-// Formula O(NF^2) via algebra de bitmasks:
+// Formula O(NF^2) via algebra de bitmask s:
 //   total_peers = (TV^2 - sum|dom[i]|^2) - conflicts
 //   conflicts   = sum_{i<j} 2*(pop(dom[i] & dom[j])          // misma col
 //                             + pop(dom[i] & (dom[j] >> d))  // diagonal +
@@ -406,7 +406,7 @@ double compute_avg_peer(const int* qr, const int* qc, int K, int N) {
     for (int i = 0; i < K; i++) placed[qr[i]] = true;
 
     int free_rows[MAXN]; int NF = 0;
-    u64 dom[MAXN];
+    bitmask dom[MAXN];
     for (int r = 0; r < N; r++) {
         if (!placed[r]) {
             dom[NF] = available_bits(r, N, qr, qc, K);
@@ -418,7 +418,7 @@ double compute_avg_peer(const int* qr, const int* qc, int K, int N) {
     // TV y suma de cuadrados
     long long TV = 0, sq_sum = 0;
     for (int i = 0; i < NF; i++) {
-        long long p = pop64(dom[i]);
+        long long p = pop_bm(dom[i]);
         TV     += p;
         sq_sum += p * p;
     }
@@ -429,9 +429,9 @@ double compute_avg_peer(const int* qr, const int* qc, int K, int N) {
     for (int i = 0; i < NF; i++) {
         for (int j = i + 1; j < NF; j++) {
             int d = free_rows[j] - free_rows[i];  // siempre > 0 (filas ordenadas)
-            long long cc = pop64(dom[i] & dom[j]);
-            long long dc = pop64(dom[i] & (dom[j] >> d))
-                         + pop64(dom[i] & (dom[j] << d));
+            long long cc = pop_bm(dom[i] & dom[j]);
+            long long dc = pop_bm(dom[i] & (dom[j] >> d))
+                         + pop_bm(dom[i] & (dom[j] << d));
             conflicts += 2 * (cc + dc);
         }
     }
@@ -521,20 +521,20 @@ void search_shrink(int N, int K_start, int K_target, long long n_att, int seed) 
             // Dominios de las filas libres post-propagación
             {
                 bool used[MAXN]={}; for(int i=0;i<cur_K;i++) used[cur_qr[i]]=true;
-                int singles[MAXN]; int ns2=0; u64 d0[MAXN];
+                int singles[MAXN]; int ns2=0; bitmask d0[MAXN];
                 for(int r=0;r<N;r++) if(!used[r]) { d0[ns2]=available_bits(r,N,cur_qr,cur_qc,cur_K); singles[ns2++]=r; }
-                u64 d1[MAXN]; memcpy(d1,d0,ns2*sizeof(u64)); propagate_all(d1,singles,ns2,N);
+                bitmask d1[MAXN]; memcpy(d1,d0,ns2*sizeof(bitmask)); propagate_all(d1,singles,ns2,N);
                 // Ordenar por dominio
                 int ord[MAXN]; for(int i=0;i<ns2;i++) ord[i]=i;
-                std::sort(ord,ord+ns2,[&](int a,int b2){return pop64(d1[a])<pop64(d1[b2]);});
+                std::sort(ord,ord+ns2,[&](int a,int b2){return pop_bm(d1[a])<pop_bm(d1[b2]);});
                 printf("  Dominios (menores primero):");
-                for(int i=0;i<std::min(ns2,10);i++) printf(" %d", pop64(d1[ord[i]]));
+                for(int i=0;i<std::min(ns2,10);i++) printf(" %d", pop_bm(d1[ord[i]]));
                 if(ns2>10) printf(" ...");
                 printf("\n");
                 // Producto acumulado (cuántos pivotes elije choose_P a bud=2000)
                 long long prod=1; int P=0;
                 for(int i=0;i<ns2&&P<10;i++) {
-                    long long np=prod*(long long)pop64(d1[ord[i]]);
+                    long long np=prod*(long long)pop_bm(d1[ord[i]]);
                     if(np>2000) break;
                     prod=np; P++;
                 }
@@ -881,7 +881,7 @@ void search_nodet(int N, int K, int n_target, int seed, int max_show, int k_max)
                 for (int i=0;i<K;i++) used[qr[i]]=true;
                 int singles[MAXN]; int ns=0;
                 for (int r=0;r<N;r++) if (!used[r]) singles[ns++]=r;
-                u64 doms[MAXN];
+                bitmask doms[MAXN];
                 for (int i=0;i<ns;i++) doms[i]=available_bits(singles[i],N,qr,qc,K);
                 ac3_bits(doms, singles, ns, N);
                 int sub[MAXN];
@@ -1146,7 +1146,7 @@ void collect_nodet(int N, int K, int seed, long long bt_limit,
         int singles[MAXN]; int ns=0;
         for (int r=0;r<N;r++) if (!used[r]) singles[ns++]=r;
 
-        u64 doms[MAXN];
+        bitmask doms[MAXN];
         for (int i=0;i<ns;i++) doms[i] = available_bits(singles[i], N, qr, qc, K);
         ac3_bits(doms, singles, ns, N);
 
@@ -1200,12 +1200,12 @@ void test_mejoras(int N, int K, const char* fname, long long n_limit) {
         long long bt_orig, us;
         if (fscanf(fp, "%lld,%lld", &bt_orig, &us) != 2) break;
 
-        u64 doms_csv[MAXN];
+        bitmask doms_csv[MAXN];
         bool ok = true;
         for (int i = 0; i < n_libres && ok; i++) {
             unsigned long long d;
             if (fscanf(fp, ",%llu", &d) != 1) { ok = false; break; }
-            doms_csv[i] = (u64)d;
+            doms_csv[i] = (bitmask)d;
         }
         for (int i = 0; i < K && ok; i++) {
             if (fscanf(fp, ",%d,%d", &qr[i], &qc[i]) != 2) { ok = false; break; }
@@ -1779,15 +1779,29 @@ static int sp_load_csv(const char* fname, int K, std::vector<SInst>& out, int ca
     return added;
 }
 
+// K_min empírico para N dado. Tabla verificada N<=19, fórmula para N>=20.
+static int get_kmin(int N) {
+    static const int tbl[] = {0,0,0,0,1,2,1,2,2,2,3,3,3,3,4,4,4,4,5,5};
+    if (N < (int)(sizeof(tbl)/sizeof(tbl[0])))
+        return std::max(1, tbl[N]);
+    return (N % 4 == 1) ? N/4 : (N+3)/4;
+}
+
+// K_start preferido para shrink: 2K reducido hasta K+1 si necesario.
+// Retorna -1 si imposible (K+1 >= N).
+static int kstart_for(int K, int N) {
+    int ks = 2 * K;
+    if (ks >= N) ks = K + std::max(2, K / 2);
+    if (ks >= N) ks = K + 1;
+    return (ks >= N) ? -1 : ks;
+}
+
 // Shrink_guided interno con cap de tiempo. Agrega instancias a `out`.
 static void sp_collect(int N, int K, long long n_att, int seed,
                         int max_to_add, std::vector<SInst>& out,
                         std::chrono::steady_clock::time_point t_ref, double t_cap_s) {
-    // K_start = 2*K da mas margen al shrink_guided (confirmado N=17 K=4 K_start=8)
-    int K_start = 2 * K;
-    if (K_start >= N) K_start = K + std::max(2, K / 2);
-    if (K_start >= N) K_start = K + 1;
-    if (K_start >= N) return;
+    int K_start = kstart_for(K, N);
+    if (K_start < 0) return;
 
     std::mt19937 gen_rng(seed);
     std::mt19937 exp_rng(seed ^ 0xDEAD);
@@ -2077,15 +2091,15 @@ static double geo_col_spread(const int* qr, const int* qc, int K, int N) {
     bool placed[MAXN] = {};
     for (int i = 0; i < K; i++) placed[qr[i]] = true;
     int NF = 0;
-    int fr[MAXN]; u64 dom[MAXN];
+    int fr[MAXN]; bitmask dom[MAXN];
     for (int r = 0; r < N; r++) {
         if (!placed[r]) { dom[NF] = available_bits(r, N, qr, qc, K); fr[NF++] = r; }
     }
     if (NF == 0) return 0.0;
     long long sum_c = 0, sum_c2 = 0, cnt = 0;
     for (int i = 0; i < NF; i++) {
-        u64 d = dom[i];
-        while (d) { int c = ctz64(d); d &= d-1; sum_c += c; sum_c2 += c*c; cnt++; }
+        bitmask d = dom[i];
+        while (d) { int c = ctz_bm(d); d &= d-1; sum_c += c; sum_c2 += c*c; cnt++; }
     }
     if (cnt < 2) return 0.0;
     double mean = (double)sum_c / cnt;
@@ -2100,17 +2114,17 @@ static double geo_col_share(const int* qr, const int* qc, int K, int N) {
     bool placed[MAXN] = {};
     for (int i = 0; i < K; i++) placed[qr[i]] = true;
     int NF = 0;
-    int fr[MAXN]; u64 dom[MAXN];
+    int fr[MAXN]; bitmask dom[MAXN];
     for (int r = 0; r < N; r++) {
         if (!placed[r]) { dom[NF] = available_bits(r, N, qr, qc, K); fr[NF++] = r; }
     }
     if (NF < 2) return 0.0;
     long long total_share = 0, total_min = 0, npairs = 0;
     for (int i = 0; i < NF; i++) {
-        int pi = pop64(dom[i]);
+        int pi = pop_bm(dom[i]);
         for (int j = i+1; j < NF; j++) {
-            int pj  = pop64(dom[j]);
-            int pij = pop64(dom[i] & dom[j]);
+            int pj  = pop_bm(dom[j]);
+            int pij = pop_bm(dom[i] & dom[j]);
             int mn  = std::min(pi, pj);
             if (mn > 0) { total_share += pij; total_min += mn; npairs++; }
         }
@@ -2125,12 +2139,64 @@ static double geo_mean_dom(const int* qr, const int* qc, int K, int N) {
     for (int i=0;i<K;i++) placed[qr[i]]=true;
     int NF=0; long long TV=0;
     for (int r=0;r<N;r++) {
-        if (!placed[r]) { TV += pop64(available_bits(r, N, qr, qc, K)); NF++; }
+        if (!placed[r]) { TV += pop_bm(available_bits(r, N, qr, qc, K)); NF++; }
     }
     return NF>0 ? (double)TV/NF : 0.0;
 }
 
 struct GeoInst { double avg_peer, coverage, dist_ctr, col_spread, col_share, mean_dom; bool is_unsat; };
+
+// Computa avg_peer + col_spread + col_share + mean_dom en un solo pase sobre dom[].
+// Evita 4 llamadas independientes que reconstruyen placed[]+dom[] cada una.
+static void geo_stats_all(const int* qr, const int* qc, int K, int N,
+                           double& out_peer, double& out_csprd,
+                           double& out_csh, double& out_mdom) {
+    bool placed[MAXN] = {};
+    for (int i = 0; i < K; i++) placed[qr[i]] = true;
+    int fr[MAXN]; bitmask dom[MAXN]; int NF = 0;
+    for (int r = 0; r < N; r++)
+        if (!placed[r]) { dom[NF] = available_bits(r, N, qr, qc, K); fr[NF++] = r; }
+
+    if (NF < 2) { out_peer = out_csprd = out_csh = out_mdom = 0.0; return; }
+
+    // mean_dom: TV/NF
+    long long TV = 0, sq_sum = 0;
+    for (int i = 0; i < NF; i++) { long long p = pop_bm(dom[i]); TV += p; sq_sum += p*p; }
+    out_mdom = (double)TV / NF;
+
+    if (TV < 2) { out_peer = out_csprd = out_csh = out_mdom = 0.0; return; }
+
+    // avg_peer: misma fórmula que compute_avg_peer
+    long long conflicts = 0;
+    // col_share + col_spread acumuladores
+    long long sum_c = 0, sum_c2 = 0, cnt_c = 0;
+    long long total_share = 0, total_min = 0, npairs = 0;
+
+    for (int i = 0; i < NF; i++) {
+        // col_spread acumuladores
+        bitmask d = dom[i];
+        while (d) { int c = ctz_bm(d); d &= d-1; sum_c += c; sum_c2 += c*c; cnt_c++; }
+
+        for (int j = i + 1; j < NF; j++) {
+            int diff = fr[j] - fr[i];
+            // avg_peer conflicts
+            long long cc = pop_bm(dom[i] & dom[j]);
+            long long dc = pop_bm(dom[i] & (dom[j] >> diff))
+                         + pop_bm(dom[i] & (dom[j] << diff));
+            conflicts += 2 * (cc + dc);
+            // col_share
+            int pi = pop_bm(dom[i]), pj = pop_bm(dom[j]);
+            int pij = (int)cc;
+            int mn = std::min(pi, pj);
+            if (mn > 0) { total_share += pij; total_min += mn; npairs++; }
+        }
+    }
+    out_peer  = (double)(TV*TV - sq_sum - conflicts) / TV / (TV - 1);
+    double mean_c = (cnt_c > 0) ? (double)sum_c/cnt_c : 0.0;
+    double var_c  = (cnt_c > 1) ? (double)sum_c2/cnt_c - mean_c*mean_c : 0.0;
+    out_csprd = sqrt(var_c > 0 ? var_c : 0) / (N - 1);
+    out_csh   = (npairs > 0) ? (double)total_share / total_min : 0.0;
+}
 
 void geo_stat(int N_lo, int N_hi, int n_unsat, int n_sat, long long n_att, int seed) {
     printf("================================================================\n");
@@ -2141,16 +2207,6 @@ void geo_stat(int N_lo, int N_hi, int n_unsat, int n_sat, long long n_att, int s
 
     auto wall_start = std::chrono::steady_clock::now();
 
-    static const int kmin_tbl[] = {0,0,0,0,1,2,1,2,2,2,3,3,3,3,4,4,4,4,5,5};
-    auto get_K = [&](int N) -> int {
-        if (N < (int)(sizeof(kmin_tbl)/sizeof(kmin_tbl[0])))
-            return std::max(1, kmin_tbl[N]);
-        // Formula verificada N>=7 (excepto N=5,6 en tabla):
-        // K_min = floor(N/4) si N%4==1, ceil(N/4) en caso contrario.
-        // Verificada contra kmin_sweep exhaustivo N=8..21.
-        return (N % 4 == 1) ? N/4 : (N+3)/4;
-    };
-
     struct NEffect {
         int N, K, nu, ns;
         double peer_u, peer_s, mdom_u, mdom_s, dist_u, dist_s, share_u, share_s, corr;
@@ -2160,7 +2216,7 @@ void geo_stat(int N_lo, int N_hi, int n_unsat, int n_sat, long long n_att, int s
     std::vector<NEffect> efects;
 
     for (int N = N_lo; N <= N_hi; N++) {
-        int K = get_K(N);
+        int K = get_kmin(N);
         printf("\n--- N=%d  K=%d ---\n", N, K);
         fflush(stdout);
 
@@ -2179,11 +2235,9 @@ void geo_stat(int N_lo, int N_hi, int n_unsat, int n_sat, long long n_att, int s
                            raw, tref, 90.0);
             }
             for (auto& x : raw) {
-                double peer  = compute_avg_peer(x.qr, x.qc, K, N);
-                double cov   = geo_diag_coverage(x.qr, x.qc, K, N);
-                double csprd = geo_col_spread(x.qr, x.qc, K, N);
-                double csh   = geo_col_share(x.qr, x.qc, K, N);
-                double mdom  = geo_mean_dom(x.qr, x.qc, K, N);
+                double peer, csprd, csh, mdom;
+                geo_stats_all(x.qr, x.qc, K, N, peer, csprd, csh, mdom);
+                double cov = geo_diag_coverage(x.qr, x.qc, K, N);
                 double cr=0, cc=0;
                 for (int j=0;j<K;j++){cr+=x.qr[j];cc+=x.qc[j];}
                 cr/=K; cc/=K;
@@ -2203,11 +2257,9 @@ void geo_stat(int N_lo, int N_hi, int n_unsat, int n_sat, long long n_att, int s
                 tries++;
                 if (!gen_placement_raw(N, K, qr, qc, rng)) continue;
                 if (pipeline(qr, qc, K, N) == UNSAT_DET) continue;
-                double peer  = compute_avg_peer(qr, qc, K, N);
-                double cov   = geo_diag_coverage(qr, qc, K, N);
-                double csprd = geo_col_spread(qr, qc, K, N);
-                double csh   = geo_col_share(qr, qc, K, N);
-                double mdom  = geo_mean_dom(qr, qc, K, N);
+                double peer, csprd, csh, mdom;
+                geo_stats_all(qr, qc, K, N, peer, csprd, csh, mdom);
+                double cov = geo_diag_coverage(qr, qc, K, N);
                 double cr=0, cc=0;
                 for (int j=0;j<K;j++){cr+=qr[j];cc+=qc[j];}
                 cr/=K; cc/=K;
@@ -2376,10 +2428,8 @@ void fast_kmin(int N, int K, double threshold, int n_target,
 static void sp_collect_mdom(int N, int K, long long n_att, int seed,
                              int max_to_add, std::vector<SInst>& out,
                              std::chrono::steady_clock::time_point t_ref, double t_cap_s) {
-    int K_start = 2 * K;
-    if (K_start >= N) K_start = K + std::max(2, K/2);
-    if (K_start >= N) K_start = K + 1;
-    if (K_start >= N) return;
+    int K_start = kstart_for(K, N);
+    if (K_start < 0) return;
     std::mt19937 rng(seed);
     int qr[MAXN], qc[MAXN];
     int added = 0;
@@ -2432,10 +2482,8 @@ static void sp_collect_prefilter(int N, int K, long long n_att, int seed,
                                   int max_to_add, std::vector<SInst>& out,
                                   std::chrono::steady_clock::time_point t_ref, double t_cap_s,
                                   double thr_kstart) {
-    int K_start = 2 * K;
-    if (K_start >= N) K_start = K + std::max(2, K/2);
-    if (K_start >= N) K_start = K + 1;
-    if (K_start >= N) return;
+    int K_start = kstart_for(K, N);
+    if (K_start < 0) return;
     if (thr_kstart <= 0)
         thr_kstart = 0.42 * N * (N - K_start) / (double)(N - K);
     std::mt19937 rng(seed);
@@ -2491,10 +2539,8 @@ static void sp_collect_central(int N, int K, long long n_att, int seed,
                                 int max_to_add, std::vector<SInst>& out,
                                 std::chrono::steady_clock::time_point t_ref, double t_cap_s,
                                 double max_d) {
-    int K_start = 2 * K;
-    if (K_start >= N) K_start = K + std::max(2, K/2);
-    if (K_start >= N) K_start = K + 1;
-    if (K_start >= N) return;
+    int K_start = kstart_for(K, N);
+    if (K_start < 0) return;
     if (max_d <= 0) max_d = 0.15;
     double center = (N - 1) / 2.0;
     double max_dist = max_d * N;
@@ -2603,10 +2649,8 @@ static void sp_collect_greedy(int N, int K, long long n_att, int seed,
                                int max_to_add, std::vector<SInst>& out,
                                std::chrono::steady_clock::time_point t_ref, double t_cap_s,
                                int top_k, int K_start_override = 0) {
-    int K_start = K_start_override > 0 ? K_start_override : 2 * K;
-    if (K_start >= N) K_start = K + std::max(2, K/2);
-    if (K_start >= N) K_start = K + 1;
-    if (K_start >= N) return;
+    int K_start = K_start_override > 0 ? K_start_override : kstart_for(K, N);
+    if (K_start < 0 || K_start >= N) return;
     if (top_k <= 0) top_k = 5;
     std::mt19937 rng(seed);
     int qr[MAXN], qc[MAXN];
@@ -2740,10 +2784,8 @@ static void sp_collect_greedy_fast(int N, int K, long long n_att, int seed,
                                     int max_to_add, std::vector<SInst>& out,
                                     std::chrono::steady_clock::time_point t_ref, double t_cap_s,
                                     int top_k, int max_sample) {
-    int K_start = 2 * K;
-    if (K_start >= N) K_start = K + std::max(2, K/2);
-    if (K_start >= N) K_start = K + 1;
-    if (K_start >= N) return;
+    int K_start = kstart_for(K, N);
+    if (K_start < 0) return;
     if (top_k <= 0) top_k = 5;
     std::mt19937 rng(seed);
     int qr[MAXN], qc[MAXN];
@@ -2797,10 +2839,8 @@ static void sp_collect_greedy_agressive(int N, int K, long long n_att, int seed,
                                          int max_to_add, std::vector<SInst>& out,
                                          std::chrono::steady_clock::time_point t_ref,
                                          double t_cap_s, int top_k, int K_start_override) {
-    int K_start = K_start_override > 0 ? K_start_override : 2 * K;
-    if (K_start >= N) K_start = K + std::max(2, K/2);
-    if (K_start >= N) K_start = K + 1;
-    if (K_start >= N) return;
+    int K_start = K_start_override > 0 ? K_start_override : kstart_for(K, N);
+    if (K_start < 0 || K_start >= N) return;
     if (top_k <= 0) top_k = 5;
     std::mt19937 rng(seed);
     int qr[MAXN], qc[MAXN];
