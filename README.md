@@ -202,9 +202,72 @@ g++ -O2 -std=c++17 -march=native -o buscar2 src/buscar_nodet.cpp
 
 No dependencies. Requires GCC 9+ or Clang 10+. The `__uint128_t` type requires a 64-bit system.
 
-### Commands
+---
 
-**`testq`** — UNSAT/SAT detection:
+## Reproducing the results
+
+### Verify a known UNSAT certificate (seconds)
+
+```bash
+# Confirm that K=9 queens block all solutions on a 32×32 board
+./buscar2 verify_soundness 32 9 163 42
+```
+
+Expected: 163/163 detected at depth=0.
+
+### Find K_min for a single N (minutes)
+
+The greedy constructor places queens one at a time, always choosing the queen
+that minimizes mean domain size — forcing the domains to collapse as fast as possible.
+
+```bash
+# Search for a K_min=9 blocking configuration on a 32×32 board (60s budget)
+./buscar2 greedy_kmin 32 9 60
+
+# Search for K_min on N=48 (auto-detects K, 120s budget)
+./buscar2 greedy_kmin 48 0 120
+```
+
+If it finds instances, each one is a verified UNSAT certificate.
+
+### Reproduce the full K_min table (hours)
+
+```bash
+# Sweep N=8 to N=60, find K_min for each N
+./buscar2 kmin_sweep 8 60
+```
+
+This reproduces Table 1 from the paper. Runtime grows with N — N=60 may take 30+ minutes.
+
+### Fast search with mean_dom threshold
+
+```bash
+# Fast K_min search for N=40, K=12, targeting 5 instances
+./buscar2 fast_kmin 40 12 0 5
+```
+
+The `0` threshold auto-sets to `0.42*N`, the empirically optimal mean_dom cutoff
+for triggering domain collapse in the greedy search.
+
+### Extend to new N beyond the table
+
+To check whether K_min(70) ≤ K for some K, run:
+
+```bash
+# Try K = ceil(70/4) = 18 first (formula prediction):
+./buscar2 greedy_kmin 70 18 120
+# If 0 found, try K=19, K=20, ... until instances appear
+./buscar2 greedy_kmin 70 19 120
+./buscar2 greedy_kmin 70 20 120
+```
+
+Each successful run gives a verified UNSAT certificate proving K_min(70) ≤ K.
+
+---
+
+## Commands reference
+
+**`testq`** — UNSAT/SAT detection in microseconds:
 ```bash
 ./buscar2 testq N K  r0 c0  r1 c1  ...  r(K-1) c(K-1)
 ```
@@ -217,7 +280,26 @@ No dependencies. Requires GCC 9+ or Clang 10+. The `__uint128_t` type requires a
 **`verify_soundness`** — generate n instances, certify all at depth=0:
 ```bash
 ./buscar2 verify_soundness N K n_instances seed
-# Example: ./buscar2 verify_soundness 16 4 1000 42
+```
+
+**`greedy_kmin`** — find blocking instances via mean_dom greedy construction:
+```bash
+./buscar2 greedy_kmin N K time_budget_seconds
+```
+
+**`fast_kmin`** — faster variant with explicit mean_dom threshold:
+```bash
+./buscar2 fast_kmin N K threshold n_target
+```
+
+**`kmin_sweep`** — find K_min for every N in a range (reproduces Table 1):
+```bash
+./buscar2 kmin_sweep N_lo N_hi
+```
+
+**`export_kmin`** — export verified instances to stdout (one per line):
+```bash
+./buscar2 export_kmin N K n_instances seed
 ```
 
 ### Code structure
