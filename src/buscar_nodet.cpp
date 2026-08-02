@@ -621,6 +621,33 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // direct_kmin N K n_trials seed
+    if (argc > 1 && std::string(argv[1]) == "direct_kmin") {
+        int N        = (argc > 2) ? atoi(argv[2]) : 16;
+        int K        = (argc > 3) ? atoi(argv[3]) : 0;
+        int n_trials = (argc > 4) ? atoi(argv[4]) : 1000;
+        int seed     = (argc > 5) ? atoi(argv[5]) : 42;
+        if (K <= 0) K = get_kmin(N);
+        g_max_combos     = 2000;
+        g_pipeline_depth = 2;
+        direct_kmin(N, K, n_trials, seed);
+        return 0;
+    }
+
+    if (argc > 1 && std::string(argv[1]) == "direct_kmin2") {
+        int N        = (argc > 2) ? atoi(argv[2]) : 16;
+        int K        = (argc > 3) ? atoi(argv[3]) : 0;
+        int n_trials = (argc > 4) ? atoi(argv[4]) : 1000;
+        int seed     = (argc > 5) ? atoi(argv[5]) : 42;
+        int combos   = (argc > 6) ? atoi(argv[6]) : 2000;
+        int depth    = (argc > 7) ? atoi(argv[7]) : 2;
+        if (K <= 0) K = get_kmin(N);
+        g_max_combos     = combos;
+        g_pipeline_depth = depth;
+        direct_kmin2(N, K, n_trials, seed);
+        return 0;
+    }
+
     // Modo default: search_nodet
     int N        = (argc > 1) ? atoi(argv[1]) : 32;
     int K        = (argc > 2) ? atoi(argv[2]) : 16;

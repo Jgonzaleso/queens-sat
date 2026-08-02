@@ -2987,3 +2987,232 @@ void shrink_compare(int N, int K, long long n_att, double t_budget, int seed) {
                r.secs > 0 ? r.found/r.secs : 0.0);
     printf("================================================================\n");
 }
+
+// ─── DIRECT_KMIN: greedy determinista por minimización de score compuesto ────
+// Score = mean_dom × avg_peer (ambos bajos → UNSAT probable)
+// En cada paso coloca la reina que minimiza el score.
+// Tiebreak aleatorio. Primera reina aleatoria para diversidad entre trials.
+// Parámetros: N K n_trials seed
+void direct_kmin(int N, int K, int n_trials, int seed) {
+    printf("================================================================\n");
+    printf("  DIRECT_KMIN  N=%d  K=%d  trials=%d  seed=%d\n", N, K, n_trials, seed);
+    printf("  Score = mean_dom * avg_peer  (greedy determinista)\n");
+    printf("================================================================\n");
+    fflush(stdout);
+
+    std::mt19937 rng(seed);
+    int found = 0, no_place = 0;
+    double t_total = 0;
+    int qr_best[MAXN], qc_best[MAXN];
+    double best_rate = -1;
+
+    auto wall = std::chrono::steady_clock::now;
+
+    for (int trial = 0; trial < n_trials; trial++) {
+        int qr[MAXN], qc[MAXN];
+        int nq = 0;
+        bool ok = true;
+        auto t0 = wall();
+
+        // Primera reina: aleatoria (diversidad entre trials)
+        {
+            int r = rng() % N;
+            int c = rng() % N;
+            qr[nq] = r; qc[nq] = c; nq++;
+        }
+
+        for (int step = 1; step < K; step++) {
+            double best_score = 1e18;
+            int best_r[MAXN*MAXN], best_c[MAXN*MAXN];
+            int nbest = 0;
+
+            // Marcar filas usadas
+            bool row_used[MAXN] = {};
+            bool col_used[MAXN] = {};
+            for (int i = 0; i < nq; i++) { row_used[qr[i]] = true; col_used[qc[i]] = true; }
+
+            for (int r = 0; r < N; r++) {
+                if (row_used[r]) continue;
+                for (int c = 0; c < N; c++) {
+                    // Verificar no ataque
+                    bool atk = false;
+                    for (int i = 0; i < nq; i++)
+                        if (qc[i]==c || abs(qr[i]-r)==abs(qc[i]-c)) { atk=true; break; }
+                    if (atk) continue;
+
+                    // Probar añadir (r,c)
+                    qr[nq] = r; qc[nq] = c;
+                    double peer, csprd, csh, mdom;
+                    geo_stats_all(qr, qc, nq+1, N, peer, csprd, csh, mdom);
+                    double score = mdom * peer;
+
+                    if (score < best_score - 1e-12) {
+                        best_score = score;
+                        nbest = 0;
+                        best_r[nbest] = r; best_c[nbest] = c; nbest++;
+                    } else if (score < best_score + 1e-12) {
+                        if (nbest < MAXN*MAXN) {
+                            best_r[nbest] = r; best_c[nbest] = c; nbest++;
+                        }
+                    }
+                }
+            }
+
+            if (nbest == 0) { ok = false; no_place++; break; }
+            int pick = rng() % nbest;
+            qr[nq] = best_r[pick]; qc[nq] = best_c[pick]; nq++;
+        }
+
+        if (!ok) continue;
+
+        double ms = std::chrono::duration<double,std::milli>(wall()-t0).count();
+        t_total += ms;
+
+        // Verificar UNSAT con pipeline
+        if (pipeline(qr, qc, K, N) == UNSAT_DET) {
+            found++;
+            if (found == 1) {
+                // Guardar primera instancia encontrada
+                for (int i=0;i<K;i++){qr_best[i]=qr[i];qc_best[i]=qc[i];}
+                printf("  [trial %4d] UNSAT encontrado en %.2fms  queens=", trial, ms);
+                for (int i=0;i<K;i++) printf("(%d,%d)",qr[i],qc[i]);
+                printf("\n"); fflush(stdout);
+            }
+            if (found % 50 == 0) {
+                printf("  found=%d / %d  (%.1f%%)  avg=%.2fms/trial\n",
+                       found, trial+1, 100.0*found/(trial+1), t_total/(trial+1));
+                fflush(stdout);
+            }
+        }
+    }
+
+    printf("================================================================\n");
+    printf("  RESULTADO FINAL\n");
+    printf("  found     : %d / %d (%.1f%%)\n", found, n_trials, 100.0*found/n_trials);
+    printf("  no_place  : %d\n", no_place);
+    printf("  avg ms    : %.3f\n", n_trials>0 ? t_total/n_trials : 0);
+    if (found > 0) {
+        printf("  Ejemplo UNSAT: ");
+        for (int i=0;i<K;i++) printf("(%d,%d)",qr_best[i],qc_best[i]);
+        printf("\n");
+        printf("  Verificar: ./buscar2 testq %d %d", N, K);
+        for (int i=0;i<K;i++) printf(" %d %d",qr_best[i],qc_best[i]);
+        printf("\n");
+    }
+    printf("================================================================\n");
+}
+
+// ─── DIRECT_KMIN2: score mejorado = mean_dom * avg_peer / (coverage + eps) ──
+// Agrega cobertura diagonal como tercer factor: UNSAT tiene coverage ALTO.
+// Primera reina sesgada al centro (dist_ctr bajo en todas las instancias UNSAT).
+void direct_kmin2(int N, int K, int n_trials, int seed) {
+    printf("================================================================\n");
+    printf("  DIRECT_KMIN2  N=%d  K=%d  trials=%d  seed=%d\n", N, K, n_trials, seed);
+    printf("  Score = mean_dom * avg_peer / (coverage + 0.01)\n");
+    printf("  Primera reina: candidatos dentro de radio N/4 del centro\n");
+    printf("================================================================\n");
+    fflush(stdout);
+
+    std::mt19937 rng(seed);
+    int found = 0, no_place = 0;
+    double t_total = 0;
+    int qr_best[MAXN], qc_best[MAXN];
+    auto wall = std::chrono::steady_clock::now;
+
+    // Precompute candidatos centrales para primera reina
+    double center = (N - 1) / 2.0;
+    double radius = N / 4.0;
+    std::vector<std::pair<int,int>> central_pos;
+    for (int r = 0; r < N; r++)
+        for (int c = 0; c < N; c++) {
+            double d = sqrt((r-center)*(r-center) + (c-center)*(c-center));
+            if (d <= radius) central_pos.push_back({r, c});
+        }
+    if (central_pos.empty())
+        for (int r=0;r<N;r++) for (int c=0;c<N;c++) central_pos.push_back({r,c});
+
+    for (int trial = 0; trial < n_trials; trial++) {
+        int qr[MAXN], qc[MAXN];
+        int nq = 0;
+        bool ok = true;
+        auto t0 = wall();
+
+        // Primera reina: dentro del radio central
+        {
+            auto [r, c] = central_pos[rng() % central_pos.size()];
+            qr[nq] = r; qc[nq] = c; nq++;
+        }
+
+        for (int step = 1; step < K; step++) {
+            double best_score = 1e18;
+            int best_r[MAXN*MAXN], best_c[MAXN*MAXN];
+            int nbest = 0;
+
+            bool row_used[MAXN] = {};
+            for (int i = 0; i < nq; i++) row_used[qr[i]] = true;
+
+            for (int r = 0; r < N; r++) {
+                if (row_used[r]) continue;
+                for (int c = 0; c < N; c++) {
+                    bool atk = false;
+                    for (int i = 0; i < nq; i++)
+                        if (qc[i]==c || abs(qr[i]-r)==abs(qc[i]-c)) { atk=true; break; }
+                    if (atk) continue;
+
+                    qr[nq] = r; qc[nq] = c;
+                    double peer, csprd, csh, mdom;
+                    geo_stats_all(qr, qc, nq+1, N, peer, csprd, csh, mdom);
+                    double cov = geo_diag_coverage(qr, qc, nq+1, N);
+                    double score = (mdom * peer) / (cov + 0.01);
+
+                    if (score < best_score - 1e-12) {
+                        best_score = score;
+                        nbest = 0;
+                        best_r[nbest] = r; best_c[nbest] = c; nbest++;
+                    } else if (score < best_score + 1e-12) {
+                        if (nbest < MAXN*MAXN) {
+                            best_r[nbest] = r; best_c[nbest] = c; nbest++;
+                        }
+                    }
+                }
+            }
+
+            if (nbest == 0) { ok = false; no_place++; break; }
+            int pick = rng() % nbest;
+            qr[nq] = best_r[pick]; qc[nq] = best_c[pick]; nq++;
+        }
+
+        if (!ok) continue;
+        double ms = std::chrono::duration<double,std::milli>(wall()-t0).count();
+        t_total += ms;
+
+        if (pipeline(qr, qc, K, N) == UNSAT_DET) {
+            found++;
+            if (found == 1) {
+                for (int i=0;i<K;i++){qr_best[i]=qr[i];qc_best[i]=qc[i];}
+                printf("  [trial %4d] UNSAT en %.2fms  queens=", trial, ms);
+                for (int i=0;i<K;i++) printf("(%d,%d)",qr[i],qc[i]);
+                printf("\n"); fflush(stdout);
+            }
+            if (found % 50 == 0) {
+                printf("  found=%d / %d  (%.1f%%)  avg=%.2fms/trial\n",
+                       found, trial+1, 100.0*found/(trial+1), t_total/(trial+1));
+                fflush(stdout);
+            }
+        }
+    }
+
+    printf("================================================================\n");
+    printf("  RESULTADO FINAL\n");
+    printf("  found     : %d / %d (%.1f%%)\n", found, n_trials, 100.0*found/n_trials);
+    printf("  no_place  : %d\n", no_place);
+    printf("  avg ms    : %.3f\n", n_trials>0 ? t_total/n_trials : 0);
+    if (found > 0) {
+        printf("  Ejemplo UNSAT: ");
+        for (int i=0;i<K;i++) printf("(%d,%d)",qr_best[i],qc_best[i]);
+        printf("\n  Verificar: ./buscar2 testq %d %d", N, K);
+        for (int i=0;i<K;i++) printf(" %d %d",qr_best[i],qc_best[i]);
+        printf("\n");
+    }
+    printf("================================================================\n");
+}
